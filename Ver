@@ -1048,7 +1048,7 @@ local SKULL = {
     x = nil, y = nil, size = 96,
     Path  = CONFIG_DIR .. "/skullhud.txt",
     Img   = CONFIG_DIR .. "/skull.png",
-    Url   = "https://raw.githubusercontent.com/cardstackdkme/Menu-V/main/skull.png",
+    Url   = "https://raw.githubusercontent.com/cardstackdkme/Vrrrrr/main/skull.png",
     data  = nil,             -- raw PNG bytes once loaded
     tried = false,           -- so a missing image is fetched once, not every frame
     status = "not loaded",
@@ -3046,7 +3046,7 @@ do
     -- Forked UI lib (bigger panel text + click-logo-to-minimize) is tried FIRST; if it ever
     -- fails to fetch/parse, we fall straight through to upstream INS-ui so the menu still loads.
     local UI_URLS = {
-        "https://raw.githubusercontent.com/cardstackdkme/Menu-V/main/uilib.lua",          -- forked
+        "https://raw.githubusercontent.com/cardstackdkme/Vrrrrr/main/uilib.lua",          -- forked
         "https://raw.githubusercontent.com/neaxusxgod-png/INS-ui/main/uilib.min.lua",  -- upstream fallback
     }
     local lastBody
