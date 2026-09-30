@@ -654,6 +654,49 @@ local function scrollbar(key,offKey,x,y,h,maxScroll,viewH,contentH)
     return disp
 end
 
+-- RS Diff row layout. A row WRAPS its path over as many lines as it needs instead of cutting it at
+-- a fixed 64 characters (which also made the cut look like a path ending in "."), and the class is
+-- right-aligned INSIDE the card — it used to START at the card's right edge and run off the
+-- window. Matcha's Drawing exposes no TextBounds, so widths come from tw(), which runs ~20% wide:
+-- a line can wrap slightly early but never spill. Cached per result list + width, because that only
+-- changes on Compare / Clear / a resize, and a diff can be thousands of rows.
+local RSL = { res = nil, cw = nil, rows = {}, total = 0, LINE = 15, PAD = 9, PATHX = 48 }
+function RSL.wrap(s, maxc)
+    local out = {}
+    while #s > maxc do
+        -- prefer to break just after a "." so a line ends on a whole name; hard-cut a name that is
+        -- itself too long for one line
+        local cut = maxc
+        for i = maxc, maxf(1, floor(maxc * 0.5)), -1 do
+            if s:byte(i) == 46 then cut = i; break end
+        end
+        -- never split a UTF-8 character: step back off continuation bytes (0x80-0xBF)
+        while cut > 1 and (s:byte(cut + 1) or 0) >= 128 and (s:byte(cut + 1) or 0) < 192 do cut = cut - 1 end
+        out[#out + 1] = s:sub(1, cut)
+        s = s:sub(cut + 1)
+    end
+    out[#out + 1] = s
+    return out
+end
+function RSL.layout(res, cw)
+    if RSL.res == res and RSL.cw == cw then return RSL end
+    local rows, yy = {}, 0
+    local right = cw - 14                  -- inside the card, clear of the scrollbar
+    local capW = floor(cw * 0.35)          -- a long "A -> B" class change can't eat the path
+    for i, rr in ipairs(res) do
+        local d = tostring(rr.detail or "")
+        if tw(d, 11) > capW then d = trim(d, floor(capW / 5.5)) end
+        local dW = (d ~= "") and tw(d, 11) or 0
+        local maxc = maxf(10, floor((right - dW - (d ~= "" and 12 or 0) - RSL.PATHX) / 6))
+        local lines = RSL.wrap(tostring(rr.path or ""), maxc)
+        local rh = #lines * RSL.LINE + RSL.PAD
+        rows[i] = { y = yy, h = rh, lines = lines, d = d, dW = dW }
+        yy = yy + rh
+    end
+    RSL.res, RSL.cw, RSL.rows, RSL.total = res, cw, rows, yy
+    return RSL
+end
+
 local function drawRS()
     if not GUI.RSDiffOpen then anim.rsopen=0; return end
     local op=av("rsopen",1,14); R.fade=op; R.yoff=(1-op)*12
@@ -677,18 +720,25 @@ local function drawRS()
     end,false,T.green)
     button("rsclr",x+14+3*(bw+10),cy,bw,30,"Clear",function() GUI.RSDiffResults=nil; GUI.RSDiffStatus=""; GUI.RSDiffScrollOffset=0 end,false,T.red)
     txt((GUI.RSDiffStatus~="" and GUI.RSDiffStatus or "Snapshot or Load Saved, then Compare."),x+14,cy+40,13,T.muted,63)
-    local res=GUI.RSDiffResults or {}; local listY=cy+64; local listH=(y+h-14)-listY; local rowH=24
-    local maxS=maxf(0,#res*rowH-listH)
+    local res=GUI.RSDiffResults or {}; local listY=cy+64; local listH=(y+h-14)-listY
+    -- Wrap against the width rounded DOWN to 32px: a resize drag re-wraps once per 32px instead of
+    -- every frame, and lines wrapped for a narrower width can only end further left. The class is
+    -- placed from the LIVE width below, so it stays pinned to the right edge while you drag.
+    local L=RSL.layout(res,cw-(cw%32))
+    local maxS=maxf(0,L.total+8-listH)
     card(x+14,listY,cw,listH,61,false)
-    local off=scrollbar("rs","RSDiffScrollOffset",x+14+cw-6,listY,listH,maxS,listH,#res*rowH)
+    local off=scrollbar("rs","RSDiffScrollOffset",x+14+cw-6,listY,listH,maxS,listH,L.total+8)
     R.clipTop=listY-1; R.clipBot=y+h-12
+    local base=listY+4-off
     for i,rr in ipairs(res) do
-        local rY=listY+4+(i-1)*rowH-off
-        if rY+rowH>listY and rY<y+h-12 then
+        local ro=L.rows[i]; local rY=base+ro.y
+        if rY>=y+h-12 then break end          -- rows are in y order: nothing further is visible
+        if rY+ro.h>listY then
             local kc=rr.kind=="ADD" and T.green or (rr.kind=="DEL" and T.red or T.yellow)
-            rect(x+20,rY+4,34,15,C3(28,28,34),63,0.8,3); txt(rr.kind,x+37,rY+5,10,kc,64,true,Drawing.Fonts.SystemBold)
-            txt(trim(rr.path or "",64),x+62,rY+4,12,T.text,64)
-            if rr.detail and rr.detail~="" then txt(trim(rr.detail,26),x+cw-10,rY+4,11,T.muted,64) end
+            -- Center=true centres BOTH axes on Position, so pass the badge's midpoint
+            rect(x+20,rY+4,34,15,C3(28,28,34),63,0.8,3); txt(rr.kind,x+37,rY+11,10,kc,64,true,Drawing.Fonts.SystemBold)
+            for j,line in ipairs(ro.lines) do txt(line,x+14+RSL.PATHX,rY+4+(j-1)*RSL.LINE,12,T.text,64) end
+            if ro.d~="" then txt(ro.d,x+14+(cw-14)-ro.dW,rY+4,11,T.muted,64) end
         end
     end
     R.clipTop=nil; R.clipBot=nil
@@ -3124,7 +3174,7 @@ local window = Lib:CreateWindow({
     title    = "Verfall",
     subtitle = "OUUU SOUURRR!",
     size     = Vector2.new(640, 580),   -- roomier than the concept's 580x542
-    badge    = "v3.1",
+    badge    = "v3.2",
     menuKey  = "f3",                     -- F3 toggles the menu (matches the old bind)
     gameInput = "always",               -- never eat movement keys
     logo     = "https://tr.rbxcdn.com/180DAY-77f7e55b054259f24c86dd76349155b0/150/150/Image/Png/noFilter",
